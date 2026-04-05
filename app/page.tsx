@@ -101,6 +101,8 @@ type ReleaseWithUi = Release & {
   sectionType: "for_you" | "core" | "collector";
 };
 
+type SortMode = "score" | "price_low" | "price_high" | "artist";
+
 function mapDbReleaseToAppRelease(
   row: DbRelease
 ): Release & { imageUrl?: string | null } {
@@ -168,6 +170,14 @@ function formatPrice(value?: number | null) {
   return `€ ${Number(value).toFixed(2)}`;
 }
 
+function formatCardPrice(value?: number | null) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return "€ —";
+  }
+
+  return `€ ${Number(value)}`;
+}
+
 function getHypeLabel(score?: number | null) {
   if (score === null || score === undefined || Number.isNaN(Number(score))) {
     return "Unknown";
@@ -188,6 +198,29 @@ function getHypeBadgeClass(score?: number | null) {
   if (n >= 75) return "bg-yellow-300/15 text-yellow-200 border border-yellow-300/30";
   if (n >= 45) return "bg-amber-400/15 text-amber-200 border border-amber-400/25";
   return "bg-zinc-800 text-zinc-300 border border-zinc-700";
+}
+
+function FilterChip({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-full px-3 py-1.5 text-xs border font-mono transition ${
+        active
+          ? "bg-yellow-300 text-black border-yellow-200"
+          : "bg-black text-zinc-300 border-zinc-700 hover:border-yellow-300/40 hover:text-yellow-200"
+      }`}
+    >
+      {label}
+    </button>
+  );
 }
 
 function ReleaseCard({
@@ -244,9 +277,27 @@ function ReleaseCard({
             {release.title}
           </p>
 
-          <p className="text-[11px] text-yellow-200/90 font-mono">
-            € {release.price} · Score {release.personalScore}
-          </p>
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <span className="text-[11px] text-yellow-200/90 font-mono">
+              {formatCardPrice(release.price)}
+            </span>
+            <span className="text-[11px] text-zinc-500 font-mono">
+              SCORE {release.personalScore}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {release.limited && (
+              <span className="text-[10px] px-2 py-1 rounded-full bg-black text-yellow-200 border border-yellow-300/20 font-mono">
+                LIMITED
+              </span>
+            )}
+            {release.numbered && (
+              <span className="text-[10px] px-2 py-1 rounded-full bg-black text-zinc-300 border border-zinc-700 font-mono">
+                NUMBERED
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -349,6 +400,10 @@ export default function Home() {
   const [selectedUser, setSelectedUser] = useState<MockUserKey>("user1");
   const [searchTerm, setSearchTerm] = useState("");
   const [discogsQuery, setDiscogsQuery] = useState("Arctic Monkeys");
+  const [sortMode, setSortMode] = useState<SortMode>("score");
+  const [onlyCrate, setOnlyCrate] = useState(false);
+  const [hidePass, setHidePass] = useState(true);
+  const [onlyCollector, setOnlyCollector] = useState(false);
 
   const [releases, setReleases] = useState<
     (Release & { imageUrl?: string | null })[]
@@ -514,96 +569,116 @@ export default function Home() {
   }, [selectedUser]);
 
   const personalizedReleases = useMemo<ReleaseWithUi[]>(() => {
-    return releases
-      .map((release) => {
-        let personalScore = calculatePersonalScore(release, currentUser);
+    const mapped = releases.map((release) => {
+      let personalScore = calculatePersonalScore(release, currentUser);
 
-        const artistBoost = getArtistBoost(release.artist, favoriteArtists);
-        personalScore += artistBoost;
+      const artistBoost = getArtistBoost(release.artist, favoriteArtists);
+      personalScore += artistBoost;
 
-        if (liked.includes(release.id)) personalScore += 15;
-        if (ignored.includes(release.id)) personalScore -= 20;
+      if (liked.includes(release.id)) personalScore += 15;
+      if (ignored.includes(release.id)) personalScore -= 20;
 
-        personalScore = Math.max(0, Math.min(100, personalScore));
+      personalScore = Math.max(0, Math.min(100, personalScore));
 
-        const baseScore = calculateBaseScore(release);
-        const recommendation = getRecommendationLabel(personalScore);
-        const reasons = getScoreReasons(release, currentUser);
+      const baseScore = calculateBaseScore(release);
+      const recommendation = getRecommendationLabel(personalScore);
+      const reasons = getScoreReasons(release, currentUser);
 
-        if (artistBoost > 0) reasons.unshift("Match con artista preferito");
-        if (liked.includes(release.id)) reasons.unshift("Ti è piaciuta");
-        if (ignored.includes(release.id)) reasons.unshift("L'hai ignorata");
+      if (artistBoost > 0) reasons.unshift("Match con artista preferito");
+      if (liked.includes(release.id)) reasons.unshift("Ti è piaciuta");
+      if (ignored.includes(release.id)) reasons.unshift("L'hai ignorata");
 
-        let sectionType: "for_you" | "core" | "collector" = "core";
+      let sectionType: "for_you" | "core" | "collector" = "core";
 
-        const noteNorm = normalizeText(release.note || "");
-        const titleNorm = normalizeText(release.title || "");
+      const noteNorm = normalizeText(release.note || "");
+      const titleNorm = normalizeText(release.title || "");
 
-        const looksCollector =
-          release.type === "Collector Pick" ||
-          release.limited ||
-          release.numbered ||
-          noteNorm.includes("collector") ||
-          noteNorm.includes("limited") ||
-          titleNorm.includes("edition") ||
-          titleNorm.includes("deluxe") ||
-          titleNorm.includes("oknotok");
+      const looksCollector =
+        release.type === "Collector Pick" ||
+        release.limited ||
+        release.numbered ||
+        noteNorm.includes("collector") ||
+        noteNorm.includes("limited") ||
+        titleNorm.includes("edition") ||
+        titleNorm.includes("deluxe") ||
+        titleNorm.includes("oknotok");
 
-        if (artistBoost > 0 || liked.includes(release.id)) {
-          sectionType = "for_you";
-        } else if (looksCollector) {
-          sectionType = "collector";
-        } else {
-          sectionType = "core";
-        }
+      if (artistBoost > 0 || liked.includes(release.id)) {
+        sectionType = "for_you";
+      } else if (looksCollector) {
+        sectionType = "collector";
+      } else {
+        sectionType = "core";
+      }
 
-        return {
-          ...release,
-          baseScore,
-          personalScore,
-          recommendation,
-          reasons: reasons.slice(0, 4),
-          artistBoost,
-          sectionType,
-        };
-      })
-      .sort((a, b) => b.personalScore - a.personalScore);
-  }, [releases, currentUser, liked, ignored, favoriteArtists]);
-
-  const filteredReleases = useMemo(() => {
-    const q = searchTerm.trim().toLowerCase();
-
-    if (!q) return personalizedReleases;
-
-    return personalizedReleases.filter((release) => {
-      return (
-        release.artist.toLowerCase().includes(q) ||
-        release.title.toLowerCase().includes(q) ||
-        release.genre.toLowerCase().includes(q) ||
-        release.type.toLowerCase().includes(q) ||
-        release.note.toLowerCase().includes(q)
-      );
+      return {
+        ...release,
+        baseScore,
+        personalScore,
+        recommendation,
+        reasons: reasons.slice(0, 4),
+        artistBoost,
+        sectionType,
+      };
     });
-  }, [personalizedReleases, searchTerm]);
+
+    const filtered = mapped.filter((release) => {
+      const q = searchTerm.trim().toLowerCase();
+
+      if (q) {
+        const matches =
+          release.artist.toLowerCase().includes(q) ||
+          release.title.toLowerCase().includes(q) ||
+          release.genre.toLowerCase().includes(q) ||
+          release.type.toLowerCase().includes(q) ||
+          release.note.toLowerCase().includes(q);
+
+        if (!matches) return false;
+      }
+
+      if (onlyCrate && !liked.includes(release.id)) return false;
+      if (hidePass && ignored.includes(release.id)) return false;
+      if (onlyCollector && release.sectionType !== "collector") return false;
+
+      return true;
+    });
+
+    return filtered.sort((a, b) => {
+      if (sortMode === "price_low") return (a.price || 0) - (b.price || 0);
+      if (sortMode === "price_high") return (b.price || 0) - (a.price || 0);
+      if (sortMode === "artist") return a.artist.localeCompare(b.artist);
+      return b.personalScore - a.personalScore;
+    });
+  }, [
+    releases,
+    currentUser,
+    liked,
+    ignored,
+    favoriteArtists,
+    searchTerm,
+    onlyCrate,
+    hidePass,
+    onlyCollector,
+    sortMode,
+  ]);
 
   const forYouReleases = useMemo(
-    () => filteredReleases.filter((r) => r.sectionType === "for_you").slice(0, 12),
-    [filteredReleases]
+    () => personalizedReleases.filter((r) => r.sectionType === "for_you").slice(0, 12),
+    [personalizedReleases]
   );
 
   const coreReleases = useMemo(
-    () => filteredReleases.filter((r) => r.sectionType === "core").slice(0, 12),
-    [filteredReleases]
+    () => personalizedReleases.filter((r) => r.sectionType === "core").slice(0, 12),
+    [personalizedReleases]
   );
 
   const collectorReleases = useMemo(
-    () =>
-      filteredReleases.filter((r) => r.sectionType === "collector").slice(0, 12),
-    [filteredReleases]
+    () => personalizedReleases.filter((r) => r.sectionType === "collector").slice(0, 12),
+    [personalizedReleases]
   );
 
-  const topPersonalScore = Number.isFinite(filteredReleases[0]?.personalScore)
-    ? filteredReleases[0].personalScore
+  const topPersonalScore = Number.isFinite(personalizedReleases[0]?.personalScore)
+    ? personalizedReleases[0].personalScore
     : 0;
 
   async function refreshFeedback() {
@@ -773,7 +848,7 @@ export default function Home() {
           </div>
         </header>
 
-        <section className="grid gap-4 md:grid-cols-2 mb-8">
+        <section className="grid gap-4 md:grid-cols-2 mb-6">
           <div className="rounded-2xl border border-zinc-800 bg-[#0b0b0b] p-4">
             <label htmlFor="search" className="block text-sm text-zinc-500 mb-2">
               Cerca nelle release
@@ -825,10 +900,55 @@ export default function Home() {
           </div>
         </section>
 
+        <section className="rounded-2xl border border-zinc-800 bg-[#0b0b0b] p-4 mb-8">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex flex-wrap gap-2">
+              <FilterChip
+                active={sortMode === "score"}
+                label="SORT: SCORE"
+                onClick={() => setSortMode("score")}
+              />
+              <FilterChip
+                active={sortMode === "price_low"}
+                label="PRICE ↑"
+                onClick={() => setSortMode("price_low")}
+              />
+              <FilterChip
+                active={sortMode === "price_high"}
+                label="PRICE ↓"
+                onClick={() => setSortMode("price_high")}
+              />
+              <FilterChip
+                active={sortMode === "artist"}
+                label="ARTIST A-Z"
+                onClick={() => setSortMode("artist")}
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <FilterChip
+                active={onlyCrate}
+                label="ONLY CRATE"
+                onClick={() => setOnlyCrate((v) => !v)}
+              />
+              <FilterChip
+                active={hidePass}
+                label="HIDE PASS"
+                onClick={() => setHidePass((v) => !v)}
+              />
+              <FilterChip
+                active={onlyCollector}
+                label="ONLY COLLECTOR"
+                onClick={() => setOnlyCollector((v) => !v)}
+              />
+            </div>
+          </div>
+        </section>
+
         <section className="grid gap-4 md:grid-cols-4 mb-10">
           <div className="rounded-2xl border border-zinc-800 bg-[#0b0b0b] p-5">
             <p className="text-sm text-zinc-600 mb-2">Release visibili</p>
-            <p className="text-3xl font-bold text-yellow-200">{filteredReleases.length}</p>
+            <p className="text-3xl font-bold text-yellow-200">{personalizedReleases.length}</p>
           </div>
 
           <div className="rounded-2xl border border-zinc-800 bg-[#0b0b0b] p-5">
