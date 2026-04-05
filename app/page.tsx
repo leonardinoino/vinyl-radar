@@ -200,6 +200,41 @@ function getHypeBadgeClass(score?: number | null) {
   return "bg-zinc-800 text-zinc-300 border border-zinc-700";
 }
 
+function getVariantReason(v: VariantRow) {
+  const reasons: string[] = [];
+
+  if ((v.hype_score || 0) >= 75) reasons.push("high hype");
+  if ((v.estimated_price || 0) >= 60) reasons.push("strong estimated price");
+  if ((v.format || "").includes("limited")) reasons.push("limited edition");
+  if ((v.format || "").includes("numbered")) reasons.push("numbered copy");
+  if ((v.format || "").includes("mono")) reasons.push("mono variant");
+  if (v.catalog_number) reasons.push("clear catalog reference");
+
+  if (reasons.length === 0) {
+    return "Questa variante emerge come la più interessante in base a hype e prezzo stimato.";
+  }
+
+  return `Questa variante emerge per ${reasons.slice(0, 3).join(", ")}.`;
+}
+
+function getBestVariant(variants: VariantRow[]) {
+  if (!variants.length) return null;
+
+  return [...variants].sort((a, b) => {
+    const hypeA = a.hype_score || 0;
+    const hypeB = b.hype_score || 0;
+
+    if (hypeB !== hypeA) return hypeB - hypeA;
+
+    const priceA = a.estimated_price || 0;
+    const priceB = b.estimated_price || 0;
+
+    if (priceB !== priceA) return priceB - priceA;
+
+    return (b.year ? Number(b.year) : 0) - (a.year ? Number(a.year) : 0);
+  })[0];
+}
+
 function FilterChip({
   active,
   label,
@@ -1124,6 +1159,89 @@ export default function Home() {
               {!loadingVariants && variants.length === 0 && (
                 <p className="text-zinc-500">Nessuna variante trovata</p>
               )}
+
+              {!loadingVariants && variants.length > 0 && (() => {
+                const bestVariant = getBestVariant(variants);
+
+                if (!bestVariant) return null;
+
+                return (
+                  <div className="border border-yellow-300/30 rounded-xl p-4 bg-black">
+                    <p className="text-xs uppercase tracking-[0.2em] text-yellow-200 font-mono mb-2">
+                      BEST VARIANT
+                    </p>
+
+                    <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                      <div>
+                        <p className="text-white font-semibold text-base">
+                          {bestVariant.title}
+                        </p>
+                        <p className="text-sm text-zinc-500 mt-1">
+                          {bestVariant.label || "Unknown label"} ·{" "}
+                          {bestVariant.country || "Unknown country"} ·{" "}
+                          {bestVariant.year || "Unknown year"}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <span
+                          className={`text-xs px-3 py-1 rounded-full ${getHypeBadgeClass(
+                            bestVariant.hype_score
+                          )}`}
+                        >
+                          {getHypeLabel(bestVariant.hype_score)}
+                        </span>
+
+                        <span className="text-xs px-3 py-1 rounded-full bg-black text-yellow-200 border border-yellow-300/20 font-mono">
+                          {formatPrice(bestVariant.estimated_price)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <p className="text-zinc-600">Catalog #</p>
+                        <p className="text-zinc-200">
+                          {bestVariant.catalog_number || "—"}
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-zinc-600">Format</p>
+                        <p className="text-zinc-200">
+                          {bestVariant.format || "—"}
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-zinc-600">Estimated Price</p>
+                        <p className="text-yellow-200 font-semibold">
+                          {formatPrice(bestVariant.estimated_price)}
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-zinc-600">Hype Score</p>
+                        <p className="text-zinc-200">
+                          {bestVariant.hype_score === null ||
+                          bestVariant.hype_score === undefined
+                            ? "—"
+                            : `${Number(bestVariant.hype_score).toFixed(0)}/100`}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-yellow-200 font-mono mb-2">
+                        WHY IT MATTERS
+                      </p>
+                      <p className="text-sm text-zinc-400">
+                        {getVariantReason(bestVariant)}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {!loadingVariants &&
                 variants.map((v) => (
