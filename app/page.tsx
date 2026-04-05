@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { mockUsers, type MockUserKey, type Release } from "@/data/mockData";
+import { type Release } from "@/data/mockData";
 import { supabase } from "@/lib/supabase";
 import { getSignals } from "@/utils/signals";
 import {
@@ -26,48 +26,6 @@ type DbRelease = {
   score: number;
   note: string;
   image_url?: string | null;
-};
-
-type DbFeedback = {
-  id: number;
-  user_key: string;
-  release_id: number;
-  feedback_type: "like" | "ignore";
-};
-
-type DbUserProfile = {
-  id: string;
-  email: string | null;
-  username: string | null;
-};
-
-type DbFavoriteArtist = {
-  id: string;
-  user_id: string;
-  artist_name: string;
-  weight: number;
-};
-
-type DbUserConnection = {
-  id: string;
-  user_id: string;
-  provider: string | null;
-  external_id: string | null;
-  access_token: string | null;
-  refresh_token: string | null;
-};
-
-type DiscogsRunResponse = {
-  success?: boolean;
-  mode?: string;
-  query?: string;
-  insertedAlbums?: number;
-  insertedVariants?: number;
-  skippedNonVinyl?: number;
-  skippedVariantDuplicate?: number;
-  skippedMalformed?: number;
-  skippedInsertError?: number;
-  error?: string;
 };
 
 type VariantRow = {
@@ -100,9 +58,37 @@ type ReleaseWithUi = Release & {
   reasons: string[];
   artistBoost: number;
   sectionType: "for_you" | "core" | "collector";
+  cardSignals: string[];
 };
 
 type SortMode = "score" | "price_low" | "price_high" | "artist";
+
+const baseUserView = {
+  name: "Collector View",
+  maxBudget: 80,
+  favoriteArtists: [
+    "Radiohead",
+    "Arctic Monkeys",
+    "Joy Division",
+    "The Strokes",
+    "Massive Attack",
+    "Aphex Twin",
+    "Burial",
+    "New Order",
+  ],
+  favoriteGenres: [
+    "Alternative Rock",
+    "Post-Punk",
+    "Indie Rock",
+    "Electronic",
+    "Experimental",
+    "Ambient",
+  ],
+  likesFirstPress: true,
+  likesLimitedEdition: true,
+  likesSigned: false,
+  collectorLevel: "medium",
+};
 
 function mapDbReleaseToAppRelease(
   row: DbRelease
@@ -142,21 +128,18 @@ function normalizeText(value: string) {
     .trim();
 }
 
-function getArtistBoost(
-  releaseArtist: string,
-  favorites: DbFavoriteArtist[]
-): number {
+function getArtistBoost(releaseArtist: string, favorites: string[]): number {
   const releaseArtistNorm = normalizeText(releaseArtist);
 
   for (const favorite of favorites) {
-    const favoriteNorm = normalizeText(favorite.artist_name);
+    const favoriteNorm = normalizeText(favorite);
 
     if (
       releaseArtistNorm === favoriteNorm ||
       releaseArtistNorm.includes(favoriteNorm) ||
       favoriteNorm.includes(releaseArtistNorm)
     ) {
-      return favorite.weight * 5;
+      return 15;
     }
   }
 
@@ -206,9 +189,9 @@ function getVariantReason(v: VariantRow) {
 
   if ((v.hype_score || 0) >= 75) reasons.push("high hype");
   if ((v.estimated_price || 0) >= 60) reasons.push("strong estimated price");
-  if ((v.format || "").includes("limited")) reasons.push("limited edition");
-  if ((v.format || "").includes("numbered")) reasons.push("numbered copy");
-  if ((v.format || "").includes("mono")) reasons.push("mono variant");
+  if ((v.format || "").toLowerCase().includes("limited")) reasons.push("limited edition");
+  if ((v.format || "").toLowerCase().includes("numbered")) reasons.push("numbered copy");
+  if ((v.format || "").toLowerCase().includes("mono")) reasons.push("mono variant");
   if (v.catalog_number) reasons.push("clear catalog reference");
 
   if (reasons.length === 0) {
@@ -236,6 +219,20 @@ function getBestVariant(variants: VariantRow[]) {
   })[0];
 }
 
+function getHomeSignals(release: Release, maxBudget: number) {
+  const signals: string[] = [];
+
+  if (release.limited || release.numbered) {
+    signals.push("COLLECTOR");
+  }
+
+  if ((release.price || 0) <= maxBudget * 0.5) {
+    signals.push("GOOD PRICE");
+  }
+
+  return signals.slice(0, 2);
+}
+
 function FilterChip({
   active,
   label,
@@ -261,17 +258,9 @@ function FilterChip({
 
 function ReleaseCard({
   release,
-  isLiked,
-  isIgnored,
-  onLike,
-  onIgnore,
   onOpen,
 }: {
   release: ReleaseWithUi;
-  isLiked: boolean;
-  isIgnored: boolean;
-  onLike: () => void;
-  onIgnore: () => void;
   onOpen: () => void;
 }) {
   return (
@@ -322,7 +311,7 @@ function ReleaseCard({
             </span>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 mb-2">
             {release.limited && (
               <span className="text-[10px] px-2 py-1 rounded-full bg-black text-yellow-200 border border-yellow-300/20 font-mono">
                 LIMITED
@@ -334,10 +323,23 @@ function ReleaseCard({
               </span>
             )}
           </div>
+
+          {release.cardSignals.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {release.cardSignals.map((signal) => (
+                <span
+                  key={signal}
+                  className="text-[10px] px-2 py-1 rounded-full bg-black text-yellow-200 border border-yellow-300/20 font-mono"
+                >
+                  {signal}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2 mt-3 mb-3">
+      <div className="flex flex-wrap gap-2 mt-3">
         {release.reasons.slice(0, 2).map((reason, index) => (
           <span
             key={index}
@@ -347,36 +349,6 @@ function ReleaseCard({
           </span>
         ))}
       </div>
-
-      <div className="flex gap-2">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onLike();
-          }}
-          className={`flex-1 px-3 py-2 rounded-lg text-xs border font-mono ${
-            isLiked
-              ? "bg-yellow-300 text-black border-yellow-200"
-              : "bg-zinc-900 border-zinc-700 text-zinc-200 hover:border-yellow-300/40 hover:text-yellow-200"
-          }`}
-        >
-          ON CRATE
-        </button>
-
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onIgnore();
-          }}
-          className={`flex-1 px-3 py-2 rounded-lg text-xs border font-mono ${
-            isIgnored
-              ? "bg-zinc-200 text-black border-zinc-100"
-              : "bg-zinc-900 border-zinc-700 text-zinc-300 hover:bg-zinc-800"
-          }`}
-        >
-          PASS
-        </button>
-      </div>
     </div>
   );
 }
@@ -385,19 +357,11 @@ function SectionColumn({
   title,
   subtitle,
   releases,
-  liked,
-  ignored,
-  onLike,
-  onIgnore,
   onOpen,
 }: {
   title: string;
   subtitle: string;
   releases: ReleaseWithUi[];
-  liked: number[];
-  ignored: number[];
-  onLike: (releaseId: number) => void;
-  onIgnore: (releaseId: number) => void;
   onOpen: (release: ReleaseWithUi) => void;
 }) {
   return (
@@ -419,10 +383,6 @@ function SectionColumn({
             <ReleaseCard
               key={release.id}
               release={release}
-              isLiked={liked.includes(release.id)}
-              isIgnored={ignored.includes(release.id)}
-              onLike={() => onLike(release.id)}
-              onIgnore={() => onIgnore(release.id)}
               onOpen={() => onOpen(release)}
             />
           ))
@@ -433,41 +393,71 @@ function SectionColumn({
 }
 
 export default function Home() {
-  const [selectedUser, setSelectedUser] = useState<MockUserKey>("user1");
   const [searchTerm, setSearchTerm] = useState("");
-  const [discogsQuery, setDiscogsQuery] = useState("Arctic Monkeys");
   const [sortMode, setSortMode] = useState<SortMode>("score");
-  const [onlyCrate, setOnlyCrate] = useState(false);
-  const [hidePass, setHidePass] = useState(true);
   const [onlyCollector, setOnlyCollector] = useState(false);
+  const [followedArtists, setFollowedArtists] = useState<string[]>([]);
 
   const [releases, setReleases] = useState<
     (Release & { imageUrl?: string | null })[]
   >([]);
-  const [liked, setLiked] = useState<number[]>([]);
-  const [ignored, setIgnored] = useState<number[]>([]);
-
-  const [dbProfile, setDbProfile] = useState<DbUserProfile | null>(null);
-  const [favoriteArtists, setFavoriteArtists] = useState<DbFavoriteArtist[]>([]);
-  const [connections, setConnections] = useState<DbUserConnection[]>([]);
 
   const [loadingReleases, setLoadingReleases] = useState(true);
-  const [loadingFeedback, setLoadingFeedback] = useState(true);
-  const [loadingProfile, setLoadingProfile] = useState(true);
-
   const [releaseError, setReleaseError] = useState("");
-  const [feedbackError, setFeedbackError] = useState("");
-  const [profileError, setProfileError] = useState("");
-
-  const [importing, setImporting] = useState(false);
-  const [importMessage, setImportMessage] = useState("");
-  const [importError, setImportError] = useState("");
 
   const [selectedRelease, setSelectedRelease] = useState<ReleaseWithUi | null>(null);
   const [variants, setVariants] = useState<VariantRow[]>([]);
   const [loadingVariants, setLoadingVariants] = useState(false);
 
-  const currentUser = mockUsers[selectedUser];
+  useEffect(() => {
+    const saved = window.localStorage.getItem("vinylRadar_followedArtists");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setFollowedArtists(parsed);
+        }
+      } catch {}
+    }
+  }, []);
+
+  function persistFollowedArtists(nextArtists: string[]) {
+    setFollowedArtists(nextArtists);
+    window.localStorage.setItem(
+      "vinylRadar_followedArtists",
+      JSON.stringify(nextArtists)
+    );
+  }
+
+  function toggleFollowArtist(artist: string) {
+    const exists = followedArtists.some(
+      (a) => normalizeText(a) === normalizeText(artist)
+    );
+
+    if (exists) {
+      persistFollowedArtists(
+        followedArtists.filter((a) => normalizeText(a) !== normalizeText(artist))
+      );
+    } else {
+      persistFollowedArtists([...followedArtists, artist]);
+    }
+  }
+
+  function isArtistFollowed(artist: string) {
+    return followedArtists.some(
+      (a) => normalizeText(a) === normalizeText(artist)
+    );
+  }
+
+  const userView = useMemo(
+    () => ({
+      ...baseUserView,
+      favoriteArtists: Array.from(
+        new Set([...baseUserView.favoriteArtists, ...followedArtists])
+      ),
+    }),
+    [followedArtists]
+  );
 
   async function loadReleases() {
     setLoadingReleases(true);
@@ -486,92 +476,6 @@ export default function Home() {
     }
 
     setLoadingReleases(false);
-  }
-
-  async function loadFeedback(userKey: MockUserKey) {
-    setLoadingFeedback(true);
-    setFeedbackError("");
-
-    const { data, error } = await supabase
-      .from("user_feedback")
-      .select("*")
-      .eq("user_key", userKey);
-
-    if (error) {
-      setFeedbackError(error.message);
-      setLiked([]);
-      setIgnored([]);
-    } else {
-      const rows = (data as DbFeedback[]) || [];
-      setLiked(
-        rows.filter((r) => r.feedback_type === "like").map((r) => r.release_id)
-      );
-      setIgnored(
-        rows
-          .filter((r) => r.feedback_type === "ignore")
-          .map((r) => r.release_id)
-      );
-    }
-
-    setLoadingFeedback(false);
-  }
-
-  async function loadProfileAndFavorites() {
-    setLoadingProfile(true);
-    setProfileError("");
-
-    const { data: profileData, error: profileLoadError } = await supabase
-      .from("user_profiles")
-      .select("*")
-      .limit(1)
-      .maybeSingle();
-
-    if (profileLoadError) {
-      setProfileError(profileLoadError.message);
-      setDbProfile(null);
-      setFavoriteArtists([]);
-      setConnections([]);
-      setLoadingProfile(false);
-      return;
-    }
-
-    if (!profileData) {
-      setDbProfile(null);
-      setFavoriteArtists([]);
-      setConnections([]);
-      setLoadingProfile(false);
-      return;
-    }
-
-    const profile = profileData as DbUserProfile;
-    setDbProfile(profile);
-
-    const { data: favoritesData, error: favoritesError } = await supabase
-      .from("user_favorite_artists")
-      .select("*")
-      .eq("user_id", profile.id)
-      .order("weight", { ascending: false });
-
-    if (favoritesError) {
-      setProfileError(favoritesError.message);
-      setFavoriteArtists([]);
-    } else {
-      setFavoriteArtists((favoritesData as DbFavoriteArtist[]) || []);
-    }
-
-    const { data: connectionsData, error: connectionsError } = await supabase
-      .from("user_connections")
-      .select("*")
-      .eq("user_id", profile.id);
-
-    if (connectionsError) {
-      setProfileError(connectionsError.message);
-      setConnections([]);
-    } else {
-      setConnections((connectionsData as DbUserConnection[]) || []);
-    }
-
-    setLoadingProfile(false);
   }
 
   async function openReleaseModal(release: ReleaseWithUi) {
@@ -597,32 +501,21 @@ export default function Home() {
 
   useEffect(() => {
     loadReleases();
-    loadProfileAndFavorites();
   }, []);
-
-  useEffect(() => {
-    loadFeedback(selectedUser);
-  }, [selectedUser]);
 
   const personalizedReleases = useMemo<ReleaseWithUi[]>(() => {
     const mapped = releases.map((release) => {
-      let personalScore = calculatePersonalScore(release, currentUser);
+      let personalScore = calculatePersonalScore(release, userView as any);
 
-      const artistBoost = getArtistBoost(release.artist, favoriteArtists);
+      const artistBoost = getArtistBoost(release.artist, userView.favoriteArtists);
       personalScore += artistBoost;
-
-      if (liked.includes(release.id)) personalScore += 15;
-      if (ignored.includes(release.id)) personalScore -= 20;
-
       personalScore = Math.max(0, Math.min(100, personalScore));
 
       const baseScore = calculateBaseScore(release);
       const recommendation = getRecommendationLabel(personalScore);
-      const reasons = getScoreReasons(release, currentUser);
+      const reasons = getScoreReasons(release, userView as any);
 
-      if (artistBoost > 0) reasons.unshift("Match con artista preferito");
-      if (liked.includes(release.id)) reasons.unshift("Ti è piaciuta");
-      if (ignored.includes(release.id)) reasons.unshift("L'hai ignorata");
+      if (artistBoost > 0) reasons.unshift("Match con artista seguito");
 
       let sectionType: "for_you" | "core" | "collector" = "core";
 
@@ -639,7 +532,7 @@ export default function Home() {
         titleNorm.includes("deluxe") ||
         titleNorm.includes("oknotok");
 
-      if (artistBoost > 0 || liked.includes(release.id)) {
+      if (artistBoost > 0) {
         sectionType = "for_you";
       } else if (looksCollector) {
         sectionType = "collector";
@@ -655,6 +548,7 @@ export default function Home() {
         reasons: reasons.slice(0, 4),
         artistBoost,
         sectionType,
+        cardSignals: getHomeSignals(release, userView.maxBudget),
       };
     });
 
@@ -672,8 +566,6 @@ export default function Home() {
         if (!matches) return false;
       }
 
-      if (onlyCrate && !liked.includes(release.id)) return false;
-      if (hidePass && ignored.includes(release.id)) return false;
       if (onlyCollector && release.sectionType !== "collector") return false;
 
       return true;
@@ -685,18 +577,7 @@ export default function Home() {
       if (sortMode === "artist") return a.artist.localeCompare(b.artist);
       return b.personalScore - a.personalScore;
     });
-  }, [
-    releases,
-    currentUser,
-    liked,
-    ignored,
-    favoriteArtists,
-    searchTerm,
-    onlyCrate,
-    hidePass,
-    onlyCollector,
-    sortMode,
-  ]);
+  }, [releases, searchTerm, onlyCollector, sortMode, userView]);
 
   const forYouReleases = useMemo(
     () => personalizedReleases.filter((r) => r.sectionType === "for_you").slice(0, 12),
@@ -717,118 +598,6 @@ export default function Home() {
     ? personalizedReleases[0].personalScore
     : 0;
 
-  async function refreshFeedback() {
-    await loadFeedback(selectedUser);
-  }
-
-  async function setFeedback(
-    releaseId: number,
-    feedbackType: "like" | "ignore"
-  ) {
-    setFeedbackError("");
-
-    const oppositeType = feedbackType === "like" ? "ignore" : "like";
-
-    const currentlyLiked = liked.includes(releaseId);
-    const currentlyIgnored = ignored.includes(releaseId);
-
-    const alreadySelected =
-      (feedbackType === "like" && currentlyLiked) ||
-      (feedbackType === "ignore" && currentlyIgnored);
-
-    const { error: deleteOppositeError } = await supabase
-      .from("user_feedback")
-      .delete()
-      .eq("user_key", selectedUser)
-      .eq("release_id", releaseId)
-      .eq("feedback_type", oppositeType);
-
-    if (deleteOppositeError) {
-      setFeedbackError(deleteOppositeError.message);
-      return;
-    }
-
-    if (alreadySelected) {
-      const { error } = await supabase
-        .from("user_feedback")
-        .delete()
-        .eq("user_key", selectedUser)
-        .eq("release_id", releaseId)
-        .eq("feedback_type", feedbackType);
-
-      if (error) {
-        setFeedbackError(error.message);
-        return;
-      }
-    } else {
-      const { error } = await supabase.from("user_feedback").upsert(
-        {
-          user_key: selectedUser,
-          release_id: releaseId,
-          feedback_type: feedbackType,
-        },
-        {
-          onConflict: "user_key,release_id",
-        }
-      );
-
-      if (error) {
-        setFeedbackError(error.message);
-        return;
-      }
-    }
-
-    await refreshFeedback();
-  }
-
-  async function resetFeedback() {
-    setFeedbackError("");
-
-    const { error } = await supabase
-      .from("user_feedback")
-      .delete()
-      .eq("user_key", selectedUser);
-
-    if (error) {
-      setFeedbackError(error.message);
-      return;
-    }
-
-    setLiked([]);
-    setIgnored([]);
-  }
-
-  async function runDiscogsImport() {
-    setImporting(true);
-    setImportError("");
-    setImportMessage("");
-
-    try {
-      const response = await fetch(
-        `/api/test?mode=discogs-run&q=${encodeURIComponent(discogsQuery)}`,
-        { cache: "no-store" }
-      );
-
-      const data = (await response.json()) as DiscogsRunResponse;
-
-      if (!response.ok || data.error || !data.success) {
-        setImportError(data.error || "Errore import Discogs");
-        setImporting(false);
-        return;
-      }
-
-      setImportMessage(
-        `Album nuovi: ${data.insertedAlbums ?? 0} · Varianti nuove: ${data.insertedVariants ?? 0} · Scartate non-vinyl: ${data.skippedNonVinyl ?? 0}`
-      );
-
-      await loadReleases();
-    } catch {
-      setImportError("Errore di rete durante l'import");
-    } finally {
-      setImporting(false);
-    }
-  }
-
   return (
     <main className="min-h-screen bg-black text-white">
       <div className="max-w-[1500px] mx-auto px-6 py-10">
@@ -841,8 +610,7 @@ export default function Home() {
               VINYL RADAR_
             </h1>
             <p className="text-zinc-500 max-w-2xl">
-              Release da Supabase, feedback nel database, import Discogs e base pronta
-              per connessioni future.
+              Scopri release interessanti, segnali utili e varianti con più potenziale.
             </p>
           </div>
 
@@ -854,33 +622,12 @@ export default function Home() {
               CRATE
             </Link>
 
-            <div className="rounded-2xl border border-zinc-800 bg-[#0b0b0b] px-5 py-3 min-w-[280px]">
-              <p className="text-sm text-zinc-500 mb-2">Utente attivo</p>
-
-              <select
-                value={selectedUser}
-                onChange={(e) => setSelectedUser(e.target.value as MockUserKey)}
-                className="w-full rounded-lg bg-black border border-zinc-700 px-3 py-2 text-white font-mono"
-              >
-                <option value="user1">Mock User 1</option>
-                <option value="user2">Mock User 2</option>
-                <option value="user3">Mock User 3</option>
-                <option value="user4">Mock User 4</option>
-              </select>
-
-              <div className="mt-3 text-sm text-zinc-500">
-                <p className="text-zinc-200">{currentUser.name}</p>
-                <p>Budget: € {currentUser.maxBudget}</p>
-                <p>Collector level: {currentUser.collectorLevel}</p>
-              </div>
-
-              <button
-                onClick={resetFeedback}
-                className="mt-4 w-full rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300 hover:border-yellow-300/40 hover:text-yellow-200 font-mono transition"
-              >
-                RESET
-              </button>
-            </div>
+            <Link
+              href="/admin"
+              className="rounded-xl border border-zinc-700 px-4 py-3 text-sm text-zinc-300 hover:border-yellow-300/40 hover:text-yellow-200 transition font-mono"
+            >
+              ADMIN
+            </Link>
           </div>
         </header>
 
@@ -900,44 +647,7 @@ export default function Home() {
           </div>
 
           <div className="rounded-2xl border border-zinc-800 bg-[#0b0b0b] p-4">
-            <label
-              htmlFor="discogsQuery"
-              className="block text-sm text-zinc-500 mb-2"
-            >
-              Importa da Discogs
-            </label>
-
-            <div className="flex gap-3">
-              <input
-                id="discogsQuery"
-                type="text"
-                value={discogsQuery}
-                onChange={(e) => setDiscogsQuery(e.target.value)}
-                placeholder="Es. Arctic Monkeys"
-                className="flex-1 rounded-xl bg-black border border-zinc-700 px-4 py-3 text-white placeholder:text-zinc-600 outline-none focus:border-yellow-300/40 font-mono"
-              />
-
-              <button
-                onClick={runDiscogsImport}
-                disabled={importing || !discogsQuery.trim()}
-                className="rounded-xl bg-yellow-300 text-black px-4 py-3 font-semibold disabled:opacity-50 font-mono"
-              >
-                {importing ? "IMPORT..." : "IMPORTA"}
-              </button>
-            </div>
-
-            {importMessage && (
-              <p className="text-sm text-yellow-200 mt-3 font-mono">{importMessage}</p>
-            )}
-
-            {importError && (
-              <p className="text-sm text-red-400 mt-3 font-mono">{importError}</p>
-            )}
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-zinc-800 bg-[#0b0b0b] p-4 mb-8">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <p className="block text-sm text-zinc-500 mb-2">Vista utente</p>
             <div className="flex flex-wrap gap-2">
               <FilterChip
                 active={sortMode === "score"}
@@ -959,19 +669,6 @@ export default function Home() {
                 label="ARTIST A-Z"
                 onClick={() => setSortMode("artist")}
               />
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <FilterChip
-                active={onlyCrate}
-                label="ONLY CRATE"
-                onClick={() => setOnlyCrate((v) => !v)}
-              />
-              <FilterChip
-                active={hidePass}
-                label="HIDE PASS"
-                onClick={() => setHidePass((v) => !v)}
-              />
               <FilterChip
                 active={onlyCollector}
                 label="ONLY COLLECTOR"
@@ -988,8 +685,8 @@ export default function Home() {
           </div>
 
           <div className="rounded-2xl border border-zinc-800 bg-[#0b0b0b] p-5">
-            <p className="text-sm text-zinc-600 mb-2">Budget utente</p>
-            <p className="text-3xl font-bold text-white">€ {currentUser.maxBudget}</p>
+            <p className="text-sm text-zinc-600 mb-2">Budget target</p>
+            <p className="text-3xl font-bold text-white">€ {userView.maxBudget}</p>
           </div>
 
           <div className="rounded-2xl border border-zinc-800 bg-[#0b0b0b] p-5">
@@ -998,71 +695,10 @@ export default function Home() {
           </div>
 
           <div className="rounded-2xl border border-zinc-800 bg-[#0b0b0b] p-5">
-            <p className="text-sm text-zinc-600 mb-2">Feedback DB</p>
+            <p className="text-sm text-zinc-600 mb-2">Artisti seguiti</p>
             <p className="text-sm text-zinc-300 font-mono">
-              ON CRATE {liked.length} · PASS {ignored.length}
+              {followedArtists.length}
             </p>
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-zinc-800 bg-[#0b0b0b] p-5 mb-6">
-          <p className="text-sm text-zinc-600 mb-3">Profilo gusti dal database</p>
-
-          {loadingProfile && <p className="text-zinc-400">Caricamento profilo...</p>}
-          {profileError && <p className="text-red-400">{profileError}</p>}
-
-          {!loadingProfile && !profileError && !dbProfile && (
-            <p className="text-zinc-500">Nessun user profile trovato nel database.</p>
-          )}
-
-          {dbProfile && (
-            <div className="space-y-3">
-              <p className="text-zinc-300">
-                Profilo attivo DB:{" "}
-                <span className="font-semibold text-white">
-                  {dbProfile.username || dbProfile.email || "utente senza nome"}
-                </span>
-              </p>
-
-              <div className="flex flex-wrap gap-2">
-                {favoriteArtists.length === 0 && (
-                  <span className="text-zinc-600">
-                    Nessun artista preferito salvato
-                  </span>
-                )}
-
-                {favoriteArtists.map((artist) => (
-                  <span
-                    key={artist.id}
-                    className="text-xs px-3 py-1 rounded-full bg-black text-yellow-200 border border-yellow-300/20 font-mono"
-                  >
-                    {artist.artist_name} · peso {artist.weight}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-        </section>
-
-        <section className="rounded-2xl border border-zinc-800 bg-[#0b0b0b] p-5 mb-10">
-          <p className="text-sm text-zinc-600 mb-3">Connessioni account</p>
-
-          {!loadingProfile && connections.length === 0 && (
-            <p className="text-zinc-500">
-              Nessun account collegato ancora. Qui compariranno Discogs e Spotify.
-            </p>
-          )}
-
-          <div className="flex flex-wrap gap-2">
-            {connections.map((connection) => (
-              <span
-                key={connection.id}
-                className="text-xs px-3 py-1 rounded-full bg-black text-zinc-300 border border-zinc-700 font-mono"
-              >
-                {connection.provider || "provider"} ·{" "}
-                {connection.external_id || "senza external id"}
-              </span>
-            ))}
           </div>
         </section>
 
@@ -1072,33 +708,17 @@ export default function Home() {
           </div>
         )}
 
-        {loadingFeedback && (
-          <div className="rounded-2xl border border-zinc-800 bg-[#0b0b0b] p-5 mb-6">
-            Caricamento feedback utente...
-          </div>
-        )}
-
         {releaseError && (
           <div className="rounded-2xl border border-red-800 bg-red-950/40 p-5 mb-6 text-red-300">
             Errore release: {releaseError}
           </div>
         )}
 
-        {feedbackError && (
-          <div className="rounded-2xl border border-red-800 bg-red-950/40 p-5 mb-6 text-red-300">
-            Errore feedback: {feedbackError}
-          </div>
-        )}
-
         <section className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
           <SectionColumn
             title="FOR YOU"
-            subtitle="Le release che combaciano di più con i tuoi gusti e il tuo comportamento."
+            subtitle="Le release che combaciano di più con i gusti seguiti."
             releases={forYouReleases}
-            liked={liked}
-            ignored={ignored}
-            onLike={(id) => setFeedback(id, "like")}
-            onIgnore={(id) => setFeedback(id, "ignore")}
             onOpen={openReleaseModal}
           />
 
@@ -1106,10 +726,6 @@ export default function Home() {
             title="CORE PICKS"
             subtitle="Le release più pulite e centrali da tenere d’occhio."
             releases={coreReleases}
-            liked={liked}
-            ignored={ignored}
-            onLike={(id) => setFeedback(id, "like")}
-            onIgnore={(id) => setFeedback(id, "ignore")}
             onOpen={openReleaseModal}
           />
 
@@ -1117,10 +733,6 @@ export default function Home() {
             title="COLLECTOR PICKS"
             subtitle="Edizioni più particolari, limitate o da collezionista."
             releases={collectorReleases}
-            liked={liked}
-            ignored={ignored}
-            onLike={(id) => setFeedback(id, "like")}
-            onIgnore={(id) => setFeedback(id, "ignore")}
             onOpen={openReleaseModal}
           />
         </section>
@@ -1135,7 +747,7 @@ export default function Home() {
             onClick={(e) => e.stopPropagation()}
             className="bg-[#0b0b0b] border border-zinc-800 rounded-2xl w-full max-w-5xl max-h-[85vh] overflow-hidden"
           >
-            <div className="p-5 border-b border-zinc-800 flex justify-between items-start">
+            <div className="p-5 border-b border-zinc-800 flex justify-between items-start gap-4">
               <div>
                 <p className="text-[11px] uppercase tracking-[0.2em] text-yellow-200 font-mono mb-2">
                   RELEASE PANEL
@@ -1144,12 +756,27 @@ export default function Home() {
                 <p className="text-zinc-500">{selectedRelease.title}</p>
               </div>
 
-              <button
-                onClick={closeReleaseModal}
-                className="text-zinc-500 hover:text-yellow-200 font-mono"
-              >
-                CLOSE
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => toggleFollowArtist(selectedRelease.artist)}
+                  className={`rounded-lg px-3 py-2 text-sm font-mono border ${
+                    isArtistFollowed(selectedRelease.artist)
+                      ? "bg-yellow-300 text-black border-yellow-200"
+                      : "bg-black text-yellow-200 border-yellow-300/30 hover:bg-yellow-300 hover:text-black"
+                  }`}
+                >
+                  {isArtistFollowed(selectedRelease.artist)
+                    ? "FOLLOWING"
+                    : "FOLLOW ARTIST"}
+                </button>
+
+                <button
+                  onClick={closeReleaseModal}
+                  className="text-zinc-500 hover:text-yellow-200 font-mono"
+                >
+                  CLOSE
+                </button>
+              </div>
             </div>
 
             <div className="p-5 overflow-y-auto max-h-[70vh] space-y-4">
